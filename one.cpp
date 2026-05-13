@@ -955,7 +955,7 @@ static int cli(int argc, char** argv)
 		}
 		std::size_t eqidx = arg2.find('=');
 		if (eqidx != std::string::npos) {
-			if ((arg2.substr(0, eqidx) == "allowManaged") || (arg2.substr(0, eqidx) == "allowGlobal") || (arg2.substr(0, eqidx) == "allowDefault") || (arg2.substr(0, eqidx) == "allowDNS")) {
+			if ((arg2.substr(0, eqidx) == "allowManaged") || (arg2.substr(0, eqidx) == "allowGlobal") || (arg2.substr(0, eqidx) == "allowDefault") || (arg2.substr(0, eqidx) == "allowDNS") || (arg2.substr(0, eqidx) == "tapPersistent")) {
 				char jsons[1024];
 				OSUtils::ztsnprintf(jsons, sizeof(jsons), "{\"%s\":%s}", arg2.substr(0, eqidx).c_str(), (((arg2.substr(eqidx, 2) == "=t") || (arg2.substr(eqidx, 2) == "=1")) ? "true" : "false"));
 				char cl[128];

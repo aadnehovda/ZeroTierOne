@@ -309,6 +309,7 @@ class NetworkState {
 		_settings.allowGlobal = false;
 		_settings.allowDefault = false;
 		_settings.allowDNS = false;
+		_settings.tapPersistent = false;
 		memset(&_config, 0, sizeof(ZT_VirtualNetworkConfig));
 	}
 
@@ -389,6 +390,16 @@ class NetworkState {
 	bool allowDNS() const
 	{
 		return _settings.allowDNS;
+	}
+
+	void setTapPersistent(bool persistent)
+	{
+		_settings.tapPersistent = persistent;
+	}
+
+	bool tapPersistent() const
+	{
+		return _settings.tapPersistent;
 	}
 
 	std::vector<InetAddress> allowManagedWhitelist() const
@@ -530,6 +541,58 @@ static std::string _trimString(const std::string& s)
 	return s.substr(start, end - start);
 }
 
+static OneService::NetworkSettings _defaultNetworkSettings()
+{
+	OneService::NetworkSettings settings;
+	settings.allowManaged = true;
+	settings.allowGlobal = false;
+	settings.allowDefault = false;
+	settings.allowDNS = false;
+	settings.tapPersistent = false;
+	return settings;
+}
+
+static void _loadNetworkSettingsFile(const std::string& homePath, const uint64_t nwid, OneService::NetworkSettings& settings)
+{
+	char nlcpath[256];
+	OSUtils::ztsnprintf(nlcpath, sizeof(nlcpath), "%s" ZT_PATH_SEPARATOR_S "networks.d" ZT_PATH_SEPARATOR_S "%.16llx.local.conf", homePath.c_str(), nwid);
+	std::string nlcbuf;
+	if (! OSUtils::readFile(nlcpath, nlcbuf))
+		return;
+
+	Dictionary<4096> nc;
+	nc.load(nlcbuf.c_str());
+
+	settings.allowManagedWhitelist.clear();
+	Buffer<1024> allowManaged;
+	if (nc.get("allowManaged", allowManaged) && allowManaged.size() > 0) {
+		std::string addresses(allowManaged.begin(), allowManaged.size());
+		if (allowManaged.size() <= 5) {	  // untidy parsing for backward compatibility
+			settings.allowManaged = (allowManaged[0] == '1' || allowManaged[0] == 't' || allowManaged[0] == 'T');
+		}
+		else {
+			// this should be a list of IP addresses
+			settings.allowManaged = true;
+			size_t pos = 0;
+			while (true) {
+				size_t nextPos = addresses.find(',', pos);
+				std::string address = addresses.substr(pos, (nextPos == std::string::npos ? addresses.size() : nextPos) - pos);
+				settings.allowManagedWhitelist.push_back(InetAddress(address.c_str()));
+				if (nextPos == std::string::npos)
+					break;
+				pos = nextPos + 1;
+			}
+		}
+	}
+	else {
+		settings.allowManaged = true;
+	}
+	settings.allowGlobal = nc.getB("allowGlobal", false);
+	settings.allowDefault = nc.getB("allowDefault", false);
+	settings.allowDNS = nc.getB("allowDNS", false);
+	settings.tapPersistent = nc.getB("tapPersistent", false);
+}
+
 static void _networkToJson(nlohmann::json& nj, NetworkState& ns)
 {
 	char tmp[256];
@@ -598,6 +661,7 @@ static void _networkToJson(nlohmann::json& nj, NetworkState& ns)
 	nj["allowGlobal"] = localSettings.allowGlobal;
 	nj["allowDefault"] = localSettings.allowDefault;
 	nj["allowDNS"] = localSettings.allowDNS;
+	nj["tapPersistent"] = localSettings.tapPersistent;
 
 	nlohmann::json aa = nlohmann::json::array();
 	for (unsigned int i = 0; i < ns.config().assignedAddressCount; ++i) {
@@ -1718,6 +1782,7 @@ class OneServiceImpl : public OneService {
 			fprintf(out, "allowGlobal=%d\n", (int)settings.allowGlobal);
 			fprintf(out, "allowDefault=%d\n", (int)settings.allowDefault);
 			fprintf(out, "allowDNS=%d\n", (int)settings.allowDNS);
+			fprintf(out, "tapPersistent=%d\n", (int)settings.tapPersistent);
 			fclose(out);
 		}
 
@@ -2284,43 +2349,70 @@ class OneServiceImpl : public OneService {
 
 			auto input = req.matches[1];
 			uint64_t wantnw = Utils::hexStrToU64(input.str().c_str());
-			_node->join(wantnw, (void*)0, (void*)0);
-			auto out = json::object();
-			Mutex::Lock l(_nets_m);
-			bool allowDefault = false;
 
+			json j;
+			bool validJson = false;
+			try {
+				j = OSUtils::jsonParse(req.body);
+				validJson = j.is_object();
+			}
+			catch (...) {
+				// discard invalid JSON
+			}
+
+			if (validJson) {
+				json& tapPersistent = j["tapPersistent"];
+				if (tapPersistent.is_boolean()) {
+					OneService::NetworkSettings settings;
+					if (! getNetworkSettings(wantnw, settings)) {
+						settings = _defaultNetworkSettings();
+						_loadNetworkSettingsFile(_homePath, wantnw, settings);
+					}
+					settings.tapPersistent = (bool)tapPersistent;
+					setNetworkSettings(wantnw, settings);
+				}
+			}
+
+			_node->join(wantnw, (void*)0, (void*)0);
+
+			auto out = json::object();
+			bool allowDefault = false;
+			Mutex::Lock l(_nets_m);
 			if (! _nets.empty()) {
 				NetworkState& ns = _nets[wantnw];
-				try {
-					json j(OSUtils::jsonParse(req.body));
-
-					json& allowManaged = j["allowManaged"];
-					if (allowManaged.is_boolean()) {
-						ns.setAllowManaged((bool)allowManaged);
+				if (validJson) {
+					try {
+						json& allowManaged = j["allowManaged"];
+						if (allowManaged.is_boolean()) {
+							ns.setAllowManaged((bool)allowManaged);
+						}
+						json& allowGlobal = j["allowGlobal"];
+						if (allowGlobal.is_boolean()) {
+							ns.setAllowGlobal((bool)allowGlobal);
+						}
+						json& _allowDefault = j["allowDefault"];
+						if (_allowDefault.is_boolean()) {
+							allowDefault = _allowDefault;
+							ns.setAllowDefault((bool)allowDefault);
+						}
+						json& allowDNS = j["allowDNS"];
+						if (allowDNS.is_boolean()) {
+							ns.setAllowDNS((bool)allowDNS);
+						}
+						json& tapPersistent = j["tapPersistent"];
+						if (tapPersistent.is_boolean()) {
+							ns.setTapPersistent((bool)tapPersistent);
+						}
 					}
-					json& allowGlobal = j["allowGlobal"];
-					if (allowGlobal.is_boolean()) {
-						ns.setAllowGlobal((bool)allowGlobal);
+					catch (...) {
+						// discard invalid JSON
 					}
-					json& _allowDefault = j["allowDefault"];
-					if (_allowDefault.is_boolean()) {
-						allowDefault = _allowDefault;
-						ns.setAllowDefault((bool)allowDefault);
-					}
-					json& allowDNS = j["allowDNS"];
-					if (allowDNS.is_boolean()) {
-						ns.setAllowDNS((bool)allowDNS);
-					}
-				}
-				catch (...) {
-					// discard invalid JSON
 				}
 				setNetworkSettings(wantnw, ns.settings());
 				if (ns.tap()) {
 					syncManagedStuff(ns, true, true, true);
+					_networkToJson(out, ns);
 				}
-
-				_networkToJson(out, ns);
 			}
 #ifdef __FreeBSD__
 			if (! ! allowDefault) {
@@ -3530,47 +3622,12 @@ class OneServiceImpl : public OneService {
 						char friendlyName[128];
 						OSUtils::ztsnprintf(friendlyName, sizeof(friendlyName), "ZeroTier One [%.16llx]", nwid);
 
-						n.setTap(EthernetTap::newInstance(nullptr, _concurrency, _cpuPinningEnabled, _homePath.c_str(), MAC(nwc->mac), nwc->mtu, (unsigned int)ZT_IF_METRIC, nwid, friendlyName, StapFrameHandler, (void*)this));
-						*nuptr = (void*)&n;
+						OneService::NetworkSettings settings = n.settings();
+						_loadNetworkSettingsFile(_homePath, nwid, settings);
+						n.setSettings(settings);
 
-						char nlcpath[256];
-						OSUtils::ztsnprintf(nlcpath, sizeof(nlcpath), "%s" ZT_PATH_SEPARATOR_S "networks.d" ZT_PATH_SEPARATOR_S "%.16llx.local.conf", _homePath.c_str(), nwid);
-						std::string nlcbuf;
-						if (OSUtils::readFile(nlcpath, nlcbuf)) {
-							Dictionary<4096> nc;
-							nc.load(nlcbuf.c_str());
-							Buffer<1024> allowManaged;
-							if (nc.get("allowManaged", allowManaged) && allowManaged.size() > 0) {
-								std::string addresses(allowManaged.begin(), allowManaged.size());
-								if (allowManaged.size() <= 5) {	  // untidy parsing for backward compatibility
-									if (allowManaged[0] == '1' || allowManaged[0] == 't' || allowManaged[0] == 'T') {
-										n.setAllowManaged(true);
-									}
-									else {
-										n.setAllowManaged(false);
-									}
-								}
-								else {
-									// this should be a list of IP addresses
-									n.setAllowManaged(true);
-									size_t pos = 0;
-									while (true) {
-										size_t nextPos = addresses.find(',', pos);
-										std::string address = addresses.substr(pos, (nextPos == std::string::npos ? addresses.size() : nextPos) - pos);
-										n.addToAllowManagedWhiteList(InetAddress(address.c_str()));
-										if (nextPos == std::string::npos)
-											break;
-										pos = nextPos + 1;
-									}
-								}
-							}
-							else {
-								n.setAllowManaged(true);
-							}
-							n.setAllowGlobal(nc.getB("allowGlobal", false));
-							n.setAllowDefault(nc.getB("allowDefault", false));
-							n.setAllowDNS(nc.getB("allowDNS", false));
-						}
+						n.setTap(EthernetTap::newInstance(nullptr, _concurrency, _cpuPinningEnabled, _homePath.c_str(), MAC(nwc->mac), nwc->mtu, (unsigned int)ZT_IF_METRIC, nwid, friendlyName, StapFrameHandler, (void*)this, n.tapPersistent()));
+						*nuptr = (void*)&n;
 					}
 					catch (std::exception& exc) {
 #ifdef __WINDOWS__

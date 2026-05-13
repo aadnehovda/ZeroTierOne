@@ -113,7 +113,8 @@ LinuxEthernetTap::LinuxEthernetTap(
 	uint64_t nwid,
 	const char* friendlyName,
 	void (*handler)(void*, void*, uint64_t, const MAC&, const MAC&, unsigned int, unsigned int, const void*, unsigned int),
-	void* arg)
+	void* arg,
+	bool tapPersistent)
 	: _handler(handler)
 	, _arg(arg)
 	, _nwid(nwid)
@@ -175,7 +176,16 @@ LinuxEthernetTap::LinuxEthernetTap(
 	if (gdmEntry != globalDeviceMap.end()) {
 		Utils::scopy(ifr.ifr_name, sizeof(ifr.ifr_name), gdmEntry->second.c_str());
 		OSUtils::ztsnprintf(procpath, sizeof(procpath), "/proc/sys/net/ipv4/conf/%s", ifr.ifr_name);
-		recalledDevice = (stat(procpath, &sbuf) != 0);
+		if (tapPersistent) {
+			if (stat(procpath, &sbuf) != 0) {
+				::close(_fd);
+				throw std::runtime_error(std::string("persistent TAP device '") + ifr.ifr_name + "' does not exist");
+			}
+			recalledDevice = true;
+		}
+		else {
+			recalledDevice = (stat(procpath, &sbuf) != 0);
+		}
 	}
 
 	if (! recalledDevice) {
@@ -188,7 +198,7 @@ LinuxEthernetTap::LinuxEthernetTap(
 #else
 		uint64_t trial = 0;	  // incremented in the very unlikely event of a name collision with another network
 		do {
-			const uint64_t nwid40 = (nwid ^ (nwid >> 24)) + trial++;
+			const uint64_t nwid40 = (nwid ^ (nwid >> 24)) + trial;
 			uint8_t tmp2[5];
 			char tmp3[11];
 			tmp2[0] = (uint8_t)((nwid40 >> 32) & 0xff);
@@ -202,17 +212,28 @@ LinuxEthernetTap::LinuxEthernetTap(
 			tmp3[10] = (char)0;
 			memcpy(ifr.ifr_name, tmp3, 11);
 			OSUtils::ztsnprintf(procpath, sizeof(procpath), "/proc/sys/net/ipv4/conf/%s", ifr.ifr_name);
+			if (tapPersistent) {
+				if (stat(procpath, &sbuf) != 0) {
+					::close(_fd);
+					throw std::runtime_error(std::string("persistent TAP device '") + ifr.ifr_name + "' does not exist");
+				}
+				break;
+			}
+			++trial;
 		} while (stat(procpath, &sbuf) == 0);
 #endif
 	}
 
 	ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
 	if (ioctl(_fd, TUNSETIFF, (void*)&ifr) < 0) {
+		const std::string dev(ifr.ifr_name);
+		const std::string err(strerror(errno));
 		::close(_fd);
-		throw std::runtime_error("unable to configure TUN/TAP device for TAP operation");
+		throw std::runtime_error(std::string("unable to configure TUN/TAP device '") + dev + "' for TAP operation: " + err);
 	}
 
-	::ioctl(_fd, TUNSETPERSIST, 0);	  // valgrind may generate a false alarm here
+	if (! tapPersistent)
+		::ioctl(_fd, TUNSETPERSIST, 0);	  // valgrind may generate a false alarm here
 	_dev = ifr.ifr_name;
 	::fcntl(_fd, F_SETFD, fcntl(_fd, F_GETFD) | FD_CLOEXEC);
 

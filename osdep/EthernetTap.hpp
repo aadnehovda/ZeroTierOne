@@ -35,7 +35,8 @@ class EthernetTap {
 		uint64_t nwid,
 		const char* friendlyName,
 		void (*handler)(void*, void*, uint64_t, const MAC&, const MAC&, unsigned int, unsigned int, const void*, unsigned int),
-		void* arg);
+		void* arg,
+		bool tapPersistent);
 
 	EthernetTap();
 	virtual ~EthernetTap();

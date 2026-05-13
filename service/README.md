@@ -144,6 +144,12 @@ Most network settings are not writable, as they are defined by the network contr
 | allowGlobal           | boolean       | Allow IPs and routes that overlap with global IPs | yes      |
 | allowDefault          | boolean       | Allow overriding of system default route          | yes      |
 | allowDNS              | boolean       | Allow configuration of DNS on network             | yes      |
+| tapPersistent         | boolean       | Linux: attach to an existing persistent TAP       | yes      |
+
+On Linux, `tapPersistent=true` requires the TAP named by `devicemap` or the deterministic
+default `zt*` name to exist before the network is joined. ZeroTier attaches to that TAP and
+leaves it persistent when the network is stopped. Changing this setting after a TAP has been
+created requires leaving and rejoining the network, or restarting the service.
 
 Route objects:
 

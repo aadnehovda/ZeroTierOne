@@ -85,6 +85,11 @@ class OneService {
 		 * Allow configuration of DNS for the network
 		 */
 		bool allowDNS;
+
+		/**
+		 * Attach to an existing persistent TAP instead of creating an ephemeral TAP.
+		 */
+		bool tapPersistent;
 	};
 
 	/**

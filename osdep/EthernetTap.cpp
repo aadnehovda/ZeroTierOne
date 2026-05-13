@@ -64,8 +64,11 @@ std::shared_ptr<EthernetTap> EthernetTap::newInstance(
 	uint64_t nwid,
 	const char* friendlyName,
 	void (*handler)(void*, void*, uint64_t, const MAC&, const MAC&, unsigned int, unsigned int, const void*, unsigned int),
-	void* arg)
+	void* arg,
+	bool tapPersistent)
 {
+	(void)tapPersistent;
+
 #ifdef ZT_SDK
 
 	return std::shared_ptr<EthernetTap>(new VirtualTap(homePath, mac, mtu, metric, nwid, friendlyName, handler, arg));
@@ -95,7 +98,7 @@ std::shared_ptr<EthernetTap> EthernetTap::newInstance(
 #ifdef ZT_EXTOSDEP
 	return std::shared_ptr<EthernetTap>(new ExtOsdepTap(homePath, mac, mtu, metric, nwid, friendlyName, handler, arg));
 #else
-	return std::shared_ptr<EthernetTap>(new LinuxEthernetTap(homePath, concurrency, pinning, mac, mtu, metric, nwid, friendlyName, handler, arg));
+	return std::shared_ptr<EthernetTap>(new LinuxEthernetTap(homePath, concurrency, pinning, mac, mtu, metric, nwid, friendlyName, handler, arg, tapPersistent));
 #endif	 // ZT_EXTOSDEP
 #endif	 // __LINUX__
 
