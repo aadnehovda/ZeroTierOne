@@ -481,13 +481,16 @@ bool ExtOsdepTap::addIp(const InetAddress& ip)
 {
 	Mutex::Lock l(eodMutex);
 
-	for (auto i = allIps.begin(); i != allIps.end(); ++i) {
+	for (auto i = allIps.begin(); i != allIps.end();) {
 		if (*i == ip) {
 			return true;
 		}
 		if (i->ipsEqual(ip)) {
 			doRemoveIp(*i);
+			i = allIps.erase(i);
+			continue;
 		}
+		++i;
 	}
 
 	zt_eod_msg_ip req;
@@ -515,6 +518,7 @@ bool ExtOsdepTap::removeIp(const InetAddress& ip)
 	for (auto i = allIps.begin(); i != allIps.end(); ++i) {
 		if (*i == ip) {
 			doRemoveIp(*i);
+			allIps.erase(i);
 			return true;
 		}
 	}

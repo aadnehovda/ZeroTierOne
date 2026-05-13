@@ -3212,6 +3212,35 @@ class OneServiceImpl : public OneService {
 		}
 	}
 
+	void clearManagedStuff(NetworkState& n, bool syncIps, bool syncRoutes, bool syncDns)
+	{
+		char ipbuf[64];
+
+		if (syncIps) {
+			for (std::vector<InetAddress>::iterator ip(n.managedIps().begin()); ip != n.managedIps().end(); ++ip) {
+				if (! n.tap()->removeIp(*ip)) {
+					fprintf(stderr, "ERROR: unable to remove ip address %s" ZT_EOL_S, ip->toString(ipbuf));
+				}
+#ifdef __WINDOWS__
+				WinFWHelper::removeICMPRule(*ip, n.config().nwid);
+#endif
+			}
+			n.managedIps().clear();
+		}
+
+		if (syncRoutes) {
+			n.managedRoutes().clear();
+		}
+
+		if (syncDns) {
+#ifdef __APPLE__
+			MacDNSHelper::removeDNS(n.config().nwid);
+#elif defined(__WINDOWS__)
+			WinDNSHelper::removeDNS(n.config().nwid);
+#endif
+		}
+	}
+
 	// =========================================================================
 	// Handlers for Node and Phy<> callbacks
 	// =========================================================================
@@ -3605,7 +3634,16 @@ class OneServiceImpl : public OneService {
 						Sleep(10);
 					}
 #endif
+#ifdef ZT_EXTOSDEP
+					if (nwc->status == ZT_NETWORK_STATUS_OK) {
+						syncManagedStuff(n, true, true, true);
+					}
+					else {
+						clearManagedStuff(n, true, true, true);
+					}
+#else
 					syncManagedStuff(n, true, true, true);
+#endif
 					n.tap()->setMtu(nwc->mtu);
 #ifdef ZT_EXTOSDEP
 					ExtOsdep::networkStatus(nwid, n.tap()->deviceName().c_str(), (unsigned int)nwc->status, (unsigned int)op);
