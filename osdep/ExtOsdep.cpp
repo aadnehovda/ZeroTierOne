@@ -256,6 +256,22 @@ bool ExtOsdep::getBindAddrs(std::map<InetAddress, std::string>& ret)
 	return resp->result;
 }
 
+void ExtOsdep::networkStatus(uint64_t nwid, const char* ifaceName, unsigned int status, unsigned int operation)
+{
+	zt_eod_msg_networkstatus msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.cmd = ZT_EOD_MSG_NETWORKSTATUS;
+	msg.nwid = nwid;
+	msg.status = status;
+	msg.operation = operation;
+	if (ifaceName) {
+		strncpyx(msg.name, ifaceName, sizeof(msg.name));
+	}
+
+	Mutex::Lock l(eodMutex);
+	__eodSend(msg);
+}
+
 ExtOsdepTap::ExtOsdepTap(
 	const char* homePath,
 	const MAC& mac,
